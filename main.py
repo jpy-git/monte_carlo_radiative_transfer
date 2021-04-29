@@ -547,22 +547,34 @@ class Photon:
 
 
 class Gas:
-    """Class for circumnuclear gas distribution surrounding an AGN."""
+    """Class for circumnuclear gas distribution surrounding an AGN.
 
-    # Black hole mass.
-    BLACK_HOLE_MASS: float = Constants.SOLAR_MASS * 2 * 10 ** 6
+    N.B the dimensions of the circumnuclear gas are much greater than the radius of the black hole.
+    Therefore consider the black hole as a point like source at the center of the box.
 
-    # Gravitational radius.
+    Class attributes:
+        1) BLACK_HOLE_MASS
+        2) GRAVITATIONAL_RADIUS
+        3) COMPTON_THICK_COLUMN_DENSITY
+    """
+
+    # Mass of black hole at the center of AGN.
+    BLACK_HOLE_MASS: float = (
+        Constants.SOLAR_MASS * 2 * 10 ** 6
+    )  # Consistent with De Marco et al. (2013)
+
+    # Gravitational radius of black hole.
     GRAVITATIONAL_RADIUS: float = (
         Constants.GRAVITATIONAL_CONSTANT
         * BLACK_HOLE_MASS
         / Constants.SPEED_OF_LIGHT ** 2
     )
 
-    # Compton thick column density.
-    COMPTON_THICK_COLUMN_DENSITY = (
-        10 ** 28 / 10
-    )  # Divide by 10 added to reduce number of scatterings per photon.
+    # Compton thick column density of circumnuclear gas.
+    COMPTON_THICK_COLUMN_DENSITY: float = (
+        10.0 ** 28 / 10.0
+    )  # Taken from Tatum et al. (2013).
+    # N.B. Divide by 10 added to reduce number of scatterings per photon.
 
     def __init__(
         self,
@@ -571,17 +583,27 @@ class Gas:
         opening_phi: float = np.pi / 4,
         box_length: int = 100,
     ) -> None:
+        """Initialisation method of Gas class.
 
-        # Gas attributes.
+        Args:
+            min_radius (Union[int, float], optional): Minimum radius of circumnuclear
+            gas distribution in terms of gravitational radii. Defaults to 100.0.
+            max_radius (Union[int, float], optional): Minimum radius of circumnuclear
+            gas distribution in terms of gravitational radii. Defaults to 400.0.
+            opening_phi (float, optional): Opening angle of conical gas distribution. Defaults to np.pi/4.
+            box_length (int, optional): Number of cells in Cartesian box. Defaults to 100.
+        """
+
+        # Initialise attributes of gas distribution.
         self._min_radius = min_radius * self.GRAVITATIONAL_RADIUS
         self._max_radius = max_radius * self.GRAVITATIONAL_RADIUS
         self._opening_phi = opening_phi
 
-        # Cartesian box attributes.
+        # Initialise Cartesian box.
         self._box_length = box_length
         self._unit_cell_density = self.COMPTON_THICK_COLUMN_DENSITY
 
-        # Gas array (Initialised as empty).
+        # Initialise empty NumPy array.
         self._gas_array = np.zeros(
             shape=(box_length, box_length, box_length // 2),
             dtype=float,
@@ -590,31 +612,57 @@ class Gas:
 
     @property
     def box_length(self) -> int:
+        """Getter for box_length attribute.
+
+        Returns:
+            int: Box length in non-dimensional units.
+        """
         return self._box_length
 
     @property
     def gas_array(self) -> np.ndarray:
+        """Getter for gas_array attribute.
+
+        Returns:
+            np.ndarray: 3-D NumPy array giving the density of
+            circumnuclear gas at each point in the Cartesian box.
+        """
         return self._gas_array
 
     def generate_conical_gas_array(self):
+        """Method to generate the standard disk wind geometry distribution
+        of circumnuclear gas used in Sim et al. (2008).
+        """
 
+        # Create empty gas array.
         gas_array = np.zeros(
             shape=(self._box_length, self._box_length, self._box_length // 2),
             dtype=float,
         )
 
+        # Calculate minimum radius in terms of Cartesian box coords.
         scaled_min_radius = (self._min_radius / self._max_radius) * (
             self._box_length // 2
         )
+
+        # Find mid-point of box
         midpoint_position_adjustment = self._box_length // 2 - 1
+
+        # Calculate tan of conical opening angle.
         tan_opening_phi = math.tan(self._opening_phi)
 
+        # Iterate through all cells in the Cartesian box.
         for x, y, z in product(
             range(self._box_length),
             range(self._box_length),
             range(self._box_length // 2),
         ):
 
+            # If the opening angle of the current point is greater than
+            # the conical opening angle then set the density at the
+            # current point equal to the unit cell density.
+            # N.B. can compare tan of the angles as tan is strictly
+            # increasing in the range [0, 90].
             tan_phi = np.sqrt(
                 (x - midpoint_position_adjustment) ** 2
                 + (y - midpoint_position_adjustment) ** 2
@@ -623,6 +671,8 @@ class Gas:
             if tan_phi > tan_opening_phi:
                 gas_array[x, y, z] = self._unit_cell_density
 
+        # Set density of the outside of the box to zero to ensure photons
+        # exit the gas distribution into the vacuum of space.
         gas_array[0, :, :] = 0.0
         gas_array[:, 0, :] = 0.0
         gas_array[:, :, 0] = 0.0
@@ -630,19 +680,24 @@ class Gas:
         gas_array[:, self._box_length - 1, :] = 0.0
         gas_array[:, :, self._box_length // 2 - 1] = 0.0
 
+        # Update gas array attribute.
         self._gas_array = gas_array
         self._gas_array_type = "conical"
 
         return self
 
     def plot_gas_array(self) -> None:
+        """Method to create and save a 3-D voxel plot of the gas distribution."""
 
+        # Create 3-D axis and set viewing angle.
         fig = plt.figure()
         ax = fig.add_subplot(111, projection="3d")
         ax.view_init(elev=50.0, azim=-60.0)
 
+        # Create voxel plot.
         ax.voxels(self._gas_array)
 
+        # Save the plot.
         plt.savefig(
             f"./graphs/{self._gas_array_type}_gas_distribution.png",
             dpi=300,
@@ -651,15 +706,27 @@ class Gas:
 
 
 def main(process_number: int) -> None:
+    """Main function of MCRT simulation to be run once per process.
 
+    Creates and simulates 5 million photons per process.
+    The results of all the simulations are then saved to
+    a .csv file corresponding to the input process_number.
+
+    Args:
+        process_number (int): Unique integer for the process calling main.
+    """
+
+    # Initialise instance of Gas class and generate conical gas array.
     gas = Gas()
     gas.generate_conical_gas_array()
 
+    # Simulate 5 million photons.
     t1 = time()
     results = [Photon(gas.box_length).simulate(gas.gas_array) for i in range(5000000)]
     t2 = time()
     print(f"{t2-t1}s")
 
+    # Iterate through results of simulations and save to a .csv file.
     with open(f"./results/results{process_number}.csv", "w") as results_file:
 
         results_file.write("x, y, z, theta, phi, energy, weight, distance, event\n")
@@ -669,5 +736,6 @@ def main(process_number: int) -> None:
 
 if __name__ == "__main__":
 
+    # Create 4 processes and run main in each process.
     with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
         result = executor.map(main, [1, 2, 3, 4])
