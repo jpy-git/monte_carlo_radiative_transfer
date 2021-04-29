@@ -1,10 +1,13 @@
 """Analysis of results of MCRT model in main.py"""
 
+import math
 import os
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+from main import Constants, Gas, Photon
 
 
 def import_MCRT_results(use_pickle: bool = False) -> pd.core.frame.DataFrame:
@@ -56,14 +59,8 @@ def import_MCRT_results(use_pickle: bool = False) -> pd.core.frame.DataFrame:
 if __name__ == "__main__":
 
     # Parameters:
-    # Energies in keV
     bin_width = 0.01
-    min_energy = 0.4
-    max_energy = 400
-    fek_alpha_energy = 6.407
-    fek_beta_energy = 7.034
-
-    gamma = 2.38
+    gas = Gas()
 
     print("Importing Data")
     df = import_MCRT_results(use_pickle=True)
@@ -71,7 +68,9 @@ if __name__ == "__main__":
     print("Begin Analysis")
     print("Energy Flux Histogram")
     # Create energy bins.
-    hist_bins = list(np.arange(min_energy, max_energy + bin_width, bin_width))
+    hist_bins = list(
+        np.arange(Photon.MIN_ENERGY, Photon.MAX_ENERGY + bin_width, bin_width)
+    )
 
     # Calculate weighted histogram values.
     histogram_tuple = np.histogram(df["energy"], bins=hist_bins, weights=df["weight"])
@@ -94,15 +93,23 @@ if __name__ == "__main__":
     histogram_df.plot(y="Energy Flux", loglog=True, style="r")
 
     # Add initial energy spectrum reference line.
-    initial_energy_flux = histogram_df.at[min_energy, "Energy Flux"] * histogram_df.index ** (
-        -gamma + 2
-    ) / min_energy ** (-gamma + 2)
+    initial_energy_flux = (
+        histogram_df.at[Photon.MIN_ENERGY, "Energy Flux"]
+        * histogram_df.index ** (-Photon.GAMMA + 2)
+        / Photon.MIN_ENERGY ** (-Photon.GAMMA + 2)
+    )
 
-    plt.loglog(histogram_df.index, initial_energy_flux, 'k--', label='Initial Energy Flux', zorder=0)
+    plt.loglog(
+        histogram_df.index,
+        initial_energy_flux,
+        "k--",
+        label="Initial Energy Flux",
+        zorder=0,
+    )
 
     # Add K-Alpha and K-Beta reference lines.
     plt.vlines(
-        fek_alpha_energy,
+        Photon.FEK_ALPHA_ENERGY,
         min(histogram_df["Energy Flux"]),
         max(histogram_df["Energy Flux"]) * 1.5,
         colors="b",
@@ -110,14 +117,14 @@ if __name__ == "__main__":
         label="K-Alpha Line",
     )
     plt.vlines(
-        fek_beta_energy,
+        Photon.FEK_BETA_ENERGY,
         min(histogram_df["Energy Flux"]),
         max(histogram_df["Energy Flux"]) * 1.5,
         colors="g",
         linestyles="dashed",
         label="K-Beta Line",
     )
-    
+
     # Add legend.
     plt.legend(loc="best")
 
@@ -127,3 +134,27 @@ if __name__ == "__main__":
         dpi=300,
         bbox_inches="tight",
     )
+
+    print("Time Lag Analysis")
+
+    df["direct_distance"] = (
+        (df["x"] - (gas.box_length // 2 - 1)) * np.sin(df["phi"]) * np.cos(df["theta"])
+        + (df["y"] - (gas.box_length // 2 - 1))
+        * np.sin(df["phi"])
+        * np.sin(df["theta"])
+        + df["z"] * np.cos(df["phi"])
+    ).abs()
+
+    df["time_lag"] = (
+        (df["distance"] - df["direct_distance"])
+        * (2 * gas._max_radius / gas.box_length)
+        / Constants.SPEED_OF_LIGHT
+    )
+
+    delta_angle = 0.04
+    observation_angle = math.radians(5)
+
+    time_lag_df = df.loc[(df['phi']>=observation_angle-delta_angle)&(df['phi']<observation_angle+delta_angle)]
+    fig = plt.figure()
+    time_lag_df['time_lag'].plot.hist(bins=5000)
+    plt.show()
